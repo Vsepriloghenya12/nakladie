@@ -6,58 +6,41 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
     <style>
-        body { 
-            font-family: Arial, sans-serif; 
-            padding: 20px; 
-            max-width: 800px; 
-            margin: auto;
-        }
+        body { font-family: Arial; padding: 20px; max-width: 800px; margin:auto; }
         input, select { width: 100%; padding: 10px; margin: 6px 0; }
         button { padding: 12px 20px; cursor: pointer; }
         .invoice, .history-card {
-            border: 1px solid #ccc; 
-            border-radius: 8px; 
-            padding: 12px; 
-            margin-top: 12px;
-            background: #fff;
+            border: 1px solid #ccc; border-radius: 8px;
+            padding: 12px; margin-top: 12px; background: #fff;
         }
         h2 { margin-top: 40px; }
-        a.logout { display: inline-block; margin-bottom: 15px; }
+        a.logout { display:block; margin-bottom:15px; }
 
-        /* мобильная адаптация */
-        @media(max-width: 600px) {
-            body { padding: 10px; }
-            button { width: 100%; }
-        }
+        @media(max-width:600px) { button{ width:100%; } }
     </style>
 </head>
 <body>
 
 <script>
-// Защита страницы
-if (localStorage.getItem("role") !== "manager") {
-    window.location.href = "/login.html";
-}
+if (localStorage.getItem("role") !== "manager")
+    location.href = "/login.html";
 </script>
 
 <h1>Менеджер — накладные</h1>
 <a href="/login.html" class="logout" onclick="localStorage.removeItem('role')">← выйти</a>
 
-<!-- Создание новой накладной -->
+<!-- Форма -->
 <div>
 
-    <!-- Выбор поставщика -->
     <label>Поставщик</label>
     <select id="supplierSelect" onchange="onSupplierSelect()"></select>
-
     <button onclick="showNewSupplierInput()" id="newSupplierBtn" style="margin-bottom:10px;">
         + Новый поставщик
     </button>
-
     <input type="text" id="supplierInput" placeholder="Введите поставщика" style="display:none;">
 
     <label>Сумма</label>
-    <input type="number" id="amount" step="0.01">
+    <input id="amount" type="number" step="0.01">
 
     <label>Тип организации</label>
     <select id="orgType">
@@ -65,208 +48,155 @@ if (localStorage.getItem("role") !== "manager") {
         <option value="ИП">ИП</option>
     </select>
 
-    <label style="margin-top: 8px;">
+    <label>Дата прихода</label>
+    <input id="arrivalDate" type="date">
+
+    <label>
         <input type="checkbox" id="needRequest"> Нужно сделать новую заявку
     </label>
 
     <button onclick="createInvoice()">Создать накладную</button>
 </div>
 
-<!-- Неоплаченные накладные -->
 <h2>Неоплаченные накладные</h2>
 <div id="invoiceList"></div>
 
-<!-- История оплат -->
 <h2>История оплат (10 дней)</h2>
 <div id="historyList"></div>
 
 <script>
-// ==========================
-//     П О С Т А В Щ И К И
-// ==========================
-
+// suppliers
 function loadSuppliers() {
-    let suppliers = JSON.parse(localStorage.getItem("suppliers") || "[]");
-
+    let s = JSON.parse(localStorage.getItem("suppliers")||"[]");
     const select = document.getElementById("supplierSelect");
     select.innerHTML = "";
-
-    if (suppliers.length === 0) {
-        suppliers = ["Поставщик 1"];
-        localStorage.setItem("suppliers", JSON.stringify(suppliers));
-    }
-
-    suppliers.forEach(s => {
-        const opt = document.createElement("option");
-        opt.value = s;
-        opt.textContent = s;
-        select.appendChild(opt);
+    if (s.length===0) s=["Поставщик 1"];
+    s.forEach(x=>{
+        const o=document.createElement("option");
+        o.value=o.textContent=x;
+        select.appendChild(o);
     });
-
-    return suppliers;
+    localStorage.setItem("suppliers",JSON.stringify(s));
+}
+function saveSupplier(n){
+    let s=JSON.parse(localStorage.getItem("suppliers")||"[]");
+    if(!s.includes(n)){ s.push(n); s.sort(); localStorage.setItem("suppliers",JSON.stringify(s)); }
+}
+function showNewSupplierInput(){
+    supplierSelect.style.display="none";
+    newSupplierBtn.style.display="none";
+    supplierInput.style.display="block";
+    supplierInput.value="";
+    supplierInput.focus();
+}
+function onSupplierSelect(){
+    supplierInput.style.display="none";
+    supplierSelect.style.display="block";
+    newSupplierBtn.style.display="inline-block";
 }
 
-function saveSupplier(name) {
-    let suppliers = JSON.parse(localStorage.getItem("suppliers") || "[]");
-
-    if (!suppliers.includes(name)) {
-        suppliers.push(name);
-        suppliers.sort();
-        localStorage.setItem("suppliers", JSON.stringify(suppliers));
-    }
-}
-
-function showNewSupplierInput() {
-    document.getElementById("supplierSelect").style.display = "none";
-    document.getElementById("newSupplierBtn").style.display = "none";
-    document.getElementById("supplierInput").style.display = "block";
-    document.getElementById("supplierInput").value = "";
-    document.getElementById("supplierInput").focus();
-}
-
-function onSupplierSelect() {
-    document.getElementById("supplierInput").style.display = "none";
-}
-
-// ==========================
-//   С О З Д А Н И Е
-// ==========================
-
+// создание
 async function createInvoice() {
-    const amount = document.getElementById("amount").value.trim();
-    const supplierInput = document.getElementById("supplierInput");
-    const supplierSelect = document.getElementById("supplierSelect");
+    const amount = amount.value.trim();
+    let supplier = supplierInput.style.display==="block"
+        ? supplierInput.value.trim()
+        : supplierSelect.value;
 
-    let supplier = "";
+    if(!supplier){ alert("Введите поставщика"); return; }
+    if(!amount){ alert("Введите сумму"); return; }
 
-    // Новый поставщик
-    if (supplierInput.style.display === "block") {
-        supplier = supplierInput.value.trim();
-        if (!supplier) {
-            alert("Введите поставщика");
-            return;
-        }
-        saveSupplier(supplier);
-        loadSuppliers(); // обновить список
-    } 
-    // Выбранный из списка
-    else {
-        supplier = supplierSelect.value.trim();
-        if (!supplier) {
-            alert("Выберите поставщика");
-            return;
-        }
-    }
+    if(supplierInput.style.display==="block") saveSupplier(supplier);
 
-    if (!amount) {
-        alert("Введите сумму");
-        return;
-    }
-
-    await fetch("/api/invoice/create", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-            amount,
+    await fetch("/api/invoice/create",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
             supplier,
-            organization_type: document.getElementById("orgType").value,
-            need_new_request: document.getElementById("needRequest").checked
+            amount,
+            organization_type: orgType.value,
+            arrival_date: arrivalDate.value,
+            need_new_request: needRequest.checked
         })
     });
 
-    document.getElementById("amount").value = "";
-    document.getElementById("needRequest").checked = false;
-    supplierInput.style.display = "none";
-    document.getElementById("supplierSelect").style.display = "block";
-    document.getElementById("newSupplierBtn").style.display = "inline-block";
+    amount.value="";
+    needRequest.checked=false;
+    supplierInput.style.display="none";
+    supplierSelect.style.display="block";
+    newSupplierBtn.style.display="inline-block";
 
     loadInvoices();
 }
 
-// ==========================
-//    Г А Л О Ч К А
-// ==========================
-
-async function toggleNeed(id, state) {
-    await fetch(`/api/invoice/update/${id}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ need_new_request: state })
+// галочка
+async function toggleNeed(id, state){
+    await fetch(`/api/invoice/update/${id}`,{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({need_new_request:state})
     });
 }
 
-// ==========================
-//   Н Е О П Л А Ч Е Н Н Ы Е
-// ==========================
+// неоплаченные
+async function loadInvoices(){
+    const r=await fetch("/api/invoice/list");
+    const d=await r.json();
 
-async function loadInvoices() {
-    const res = await fetch("/api/invoice/list");
-    const data = await res.json();
-
-    let html = "";
-
-    data.forEach(inv => {
-        html += `
+    let html="";
+    d.forEach(inv=>{
+        html+=`
         <div class="invoice">
             <b>${inv.supplier}</b><br>
             Сумма: ${inv.amount} ₽<br>
             Тип: ${inv.organization_type}<br>
-            Создано: ${new Date(inv.created_at).toLocaleDateString()}<br>
+            Приход: ${inv.arrival_date}<br>
+            Создано: ${inv.created_at.slice(0,10)}<br>
 
-            <label style="margin-top:6px; display:block;">
+            <label>
                 <input type="checkbox"
-                       onchange="toggleNeed(${inv.id}, this.checked)"
-                       ${inv.need_new_request ? "checked" : ""}>
+                    ${inv.need_new_request?"checked":""}
+                    onchange="toggleNeed(${inv.id},this.checked)">
                 Нужно сделать новую заявку
             </label>
-        </div>
-        `;
+        </div>`;
     });
 
-    document.getElementById("invoiceList").innerHTML =
-        html || "Нет неоплаченных накладных";
+    invoiceList.innerHTML = html || "Нет неоплаченных накладных";
 }
 
-// ==========================
-//      И С Т О Р И Я
-// ==========================
+// история
+async function loadHistory(){
+    const r=await fetch("/api/invoice/history");
+    const d=await r.json();
+    let html="";
 
-async function loadHistory() {
-    const res = await fetch("/api/invoice/history");
-    const data = await res.json();
+    if(d.length===0) html="Нет оплат за 10 дней";
+    else d.forEach(inv=>{
+        html+=`
+        <div class="history-card">
+            <b>${inv.supplier}</b><br>
+            Сумма: ${inv.amount} ₽<br>
+            Тип: ${inv.organization_type}<br>
+            Приход: ${inv.arrival_date}<br>
+            Оплачено: ${inv.paid_at.slice(0,10)}<br>
+            ${
+                inv.payment_file
+                ? `<a href="${inv.payment_file}" download>Платёжка: скачать</a>`
+                : "(файл отсутствует)"
+            }
+        </div>`;
+    });
 
-    let html = "";
-
-    if (data.length === 0) {
-        html = "Нет оплат за 10 дней";
-    } else {
-        data.forEach(inv => {
-            html += `
-            <div class="history-card">
-                <b>${inv.supplier}</b><br>
-                Сумма: ${inv.amount} ₽<br>
-                Тип: ${inv.organization_type}<br>
-                Оплачено: ${new Date(inv.paid_at).toLocaleDateString()}<br>
-                ${
-                    inv.payment_file 
-                    ? `<a href="${inv.payment_file}" download>Платёжка: скачать</a>`
-                    : "(файл недоступен — старше 10 дней)"
-                }
-            </div>
-            `;
-        });
-    }
-
-    document.getElementById("historyList").innerHTML = html;
+    historyList.innerHTML=html;
 }
 
-// ==========================
-//        З А Г Р У З К А
-// ==========================
+// загрузка
+document.getElementById("arrivalDate").value = new Date().toISOString().substring(0,10);
 
 loadSuppliers();
 loadInvoices();
 loadHistory();
+
 </script>
 
 </body>

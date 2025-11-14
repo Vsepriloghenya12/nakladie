@@ -2,182 +2,138 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>Накладные — Руководитель</title>
+    <title>Руководитель — накладные</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
     <style>
-        body { 
-            font-family: Arial, sans-serif; 
-            padding: 20px; 
-            max-width: 900px; 
-            margin: auto;
-        }
-        table { 
-            width: 100%; 
-            border-collapse: collapse; 
-            margin-top: 20px; 
-        }
-        th, td { 
-            border: 1px solid #ccc; 
-            padding: 10px; 
-            text-align: center; 
-        }
-        th { background: #f0f0f0; }
-        button { padding: 8px 15px; cursor: pointer; }
+        body { font-family:Arial; padding:20px; max-width:900px; margin:auto; }
+        table { width:100%; border-collapse:collapse; margin-top:20px; }
+        th,td{ border:1px solid #ccc; padding:10px; text-align:center; }
+        button { padding:6px 12px; margin:3px 0; cursor:pointer; }
+        a.logout{display:inline-block;margin-bottom:15px;}
 
-        a.logout { display: inline-block; margin-bottom: 15px; }
+        .p1{background:#fff;}
+        .p2{background:#fff4d2;}
+        .p3{background:#ffe1b3;}
+        .p4{background:#ffc5b5;}
+        .p5{background:#ff9999;}
 
-        /* Цвета приоритетов */
-        .p1 { background: #ffffff; }
-        .p2 { background: #fff4d2; }
-        .p3 { background: #ffe1b3; }
-        .p4 { background: #ffc5b5; }
-        .p5 { background: #ff9999; }
-
-        /* ==== Мобильная адаптация ==== */
-        @media (max-width: 600px) {
-            table, thead, tbody, th, td, tr { 
-                display: block; 
-            }
-            thead { display: none; }
-
-            tr { 
-                background: #fff; 
-                margin-bottom: 12px; 
-                border-radius: 8px;
-                padding: 10px;
-            }
-
-            td {
-                display: flex;
-                justify-content: space-between;
-                padding: 6px 0;
-                border: none;
-                border-bottom: 1px solid #eee;
-            }
-
-            td:last-child {
-                border-bottom: none;
-            }
-
-            td::before {
-                content: attr(data-label);
-                font-weight: bold;
-            }
-
-            button {
-                width: 100%;
-                margin-top: 8px;
-            }
+        @media(max-width:600px){
+            table,thead,tbody,tr,td{display:block;}
+            thead{display:none;}
+            tr{margin-bottom:12px;background:#fff;border-radius:8px;padding:10px;}
+            td{display:flex;justify-content:space-between;border:none;border-bottom:1px solid #eee;}
+            td:last-child{border-bottom:none;}
+            td::before{content:attr(data-label);font-weight:bold;}
+            button{width:100%;}
         }
     </style>
 </head>
 <body>
 
 <script>
-// защита страницы
-if (localStorage.getItem("role") !== "leader") {
-    window.location.href = "/login.html";
-}
+if(localStorage.getItem("role")!=="leader") location.href="/login.html";
 </script>
 
-<h1>Неоплаченные накладные</h1>
+<h1>Накладные — Руководитель</h1>
 <a href="/login.html" class="logout" onclick="localStorage.removeItem('role')">← выйти</a>
 
 <table>
-    <thead>
-    <tr>
-        <th>Поставщик</th>
-        <th>Сумма</th>
-        <th>Тип</th>
-        <th>Дней прошло</th>
-        <th>Просрочка</th>
-        <th>Нужна новая?</th>
-        <th>Приоритет</th>
-        <th>Платёж</th>
-    </tr>
-    </thead>
-    <tbody id="invoiceTable"></tbody>
+<thead>
+<tr>
+    <th>Поставщик</th>
+    <th>Сумма</th>
+    <th>Тип</th>
+    <th>Приход</th>
+    <th>Дней прошло</th>
+    <th>Просрочка</th>
+    <th>Нужна новая?</th>
+    <th>Приоритет</th>
+    <th>Действия</th>
+</tr>
+</thead>
+<tbody id="invoiceTable"></tbody>
 </table>
 
-<!-- скрытая форма загрузки PDF -->
-<input type="file" id="fileInput" accept="application/pdf" style="display:none">
+<input type="file" id="fileInput" accept="application/pdf" style="display:none;">
 
 <script>
-let currentInvoiceId = null;
+let currentId=null;
 
-async function loadInvoices() {
-    const res = await fetch("/api/invoice/list");
-    let data = await res.json();
+async function loadInvoices(){
+    const r=await fetch("/api/invoice/list");
+    let d=await r.json();
 
-    const now = new Date();
+    const now=new Date();
 
-    data = data.map(i => {
-        const created = new Date(i.created_at);
-        const days = Math.floor((now - created) / 86400000);
-        const overdue = Math.max(0, days - 7);
+    d=d.map(i=>{
+        const created=new Date(i.created_at);
+        const days=Math.floor((now-created)/86400000);
+        const overdue=Math.max(0,days-7);
 
-        let p = 1;
-        if (overdue >= 1 && overdue <= 3) p = 2;
-        else if (overdue >= 4 && overdue <= 7) p = 3;
-        else if (overdue >= 8 && overdue <= 14) p = 4;
-        else if (overdue > 14) p = 5;
+        let p=1;
+        if(overdue>=1&&overdue<=3)p=2;
+        else if(overdue<=7)p=3;
+        else if(overdue<=14)p=4;
+        else p=5;
 
-        if (i.need_new_request) p = Math.min(5, p + 1);
+        if(i.need_new_request) p=Math.min(5,p+1);
 
-        return { ...i, days, overdue, priority: p };
+        return {...i,days,overdue,priority:p};
     });
 
-    data.sort((a, b) => b.priority - a.priority);
+    d.sort((a,b)=>b.priority-a.priority);
 
-    let html = "";
-
-    if (data.length === 0) {
-        html = `<tr><td colspan="8">Нет неоплаченных накладных</td></tr>`;
+    let html="";
+    if(d.length===0){
+        html=`<tr><td colspan="9">Нет неоплаченных накладных</td></tr>`;
     } else {
-        data.forEach(inv => {
-            const pr = Math.max(1, Math.min(inv.priority, 5));
-
-            html += `
-            <tr class="p${pr}">
+        d.forEach(inv=>{
+            html+=`
+            <tr class="p${inv.priority}">
                 <td data-label="Поставщик">${inv.supplier}</td>
                 <td data-label="Сумма">${inv.amount} ₽</td>
                 <td data-label="Тип">${inv.organization_type}</td>
-                <td data-label="Дней прошло">${inv.days}</td>
+                <td data-label="Приход">${inv.arrival_date}</td>
+                <td data-label="Дней">${inv.days}</td>
                 <td data-label="Просрочка">${inv.overdue}</td>
-                <td data-label="Нужна новая?">${inv.need_new_request ? "Да" : "Нет"}</td>
-                <td data-label="Приоритет"><b>${inv.priority}</b></td>
-                <td data-label="Платёж">
-                    <button onclick="openUpload(${inv.id})">Оплачено</button>
+                <td data-label="Нужна новая">${inv.need_new_request?"Да":"Нет"}</td>
+                <td data-label="Приоритет">${inv.priority}</td>
+
+                <td data-label="Действия">
+                    <button onclick="markPaid(${inv.id})">Оплачено</button>
+                    <button onclick="openUpload(${inv.id})">Загрузить платёжку</button>
                 </td>
-            </tr>
-            `;
+            </tr>`;
         });
     }
 
-    document.getElementById("invoiceTable").innerHTML = html;
+    invoiceTable.innerHTML=html;
 }
 
-function openUpload(id) {
-    currentInvoiceId = id;
-    document.getElementById("fileInput").click();
+async function markPaid(id){
+    await fetch(`/api/invoice/mark-paid/${id}`,{method:"POST"});
+    loadInvoices();
 }
 
-document.getElementById("fileInput").addEventListener("change", async function() {
-    if (!this.files.length) return;
+function openUpload(id){
+    currentId=id;
+    fileInput.click();
+}
 
-    const file = this.files[0];
+fileInput.addEventListener("change", async function(){
+    if(!this.files.length)return;
 
-    const formData = new FormData();
-    formData.append("payment", file);
+    const fd = new FormData();
+    fd.append("payment",this.files[0]);
 
-    await fetch(`/api/invoice/upload-payment/${currentInvoiceId}`, {
-        method: "POST",
-        body: formData
+    await fetch(`/api/invoice/upload-payment/${currentId}`,{
+        method:"POST",
+        body:fd
     });
 
-    this.value = ""; // очистить input
-    loadInvoices();  // обновление таблицы
+    this.value="";
+    loadInvoices();
 });
 
 loadInvoices();
