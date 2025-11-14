@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Выбор роли</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 40px; text-align: center; }
+        button {
+            padding: 15px 30px;
+            margin: 20px;
+            font-size: 20px;
+            cursor: pointer;
+            border-radius: 8px;
+            border: none;
+            background: #4a8bfe;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+
+<h1>Выберите роль</h1>
+
+<button onclick="setRole('manager')">Я менеджер</button>
+<br>
+<button onclick="setRole('leader')">Я руководитель</button>
+
+<script>
+function setRole(role) {
+    localStorage.setItem("role", role);
+    if (role === "manager") {
+        window.location.href = "/manager.html";
+    } else if (role === "leader") {
+        window.location.href = "/leader.html";
+    }
+}
+
+// Авто-редирект, если роль уже сохранена
+(function autoRedirect() {
+    const role = localStorage.getItem("role");
+    if (role === "manager") {
+        window.location.href = "/manager.html";
+    } else if (role === "leader") {
+        window.location.href = "/leader.html";
+    }
+})();
+</script>
+
+</body>
+</html>
