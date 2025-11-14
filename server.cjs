@@ -10,7 +10,7 @@ const initSqlJs = require("sql.js");
 const app = express();
 
 const PORT = process.env.PORT || 3000;
-const dbPath = process.env.SQLITE_PATH || path.join(__dirname, "app.sqlite");
+const dbPath = "/mnt/data/app.sqlite";
 
 // Папка для платёжек
 const rootDir = path.dirname(dbPath);
