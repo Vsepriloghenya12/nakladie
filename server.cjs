@@ -10,7 +10,22 @@ const initSqlJs = require("sql.js");
 const app = express();
 
 const PORT = process.env.PORT || 3000;
-const dbPath = "/mnt/data/app.sqlite";
+// путь к директории Volume
+const volumeDir = "/mnt/data";
+
+// создаём каталог, если его нет
+if (!fs.existsSync(volumeDir)) {
+    fs.mkdirSync(volumeDir, { recursive: true });
+}
+
+// путь к файлу базы
+const dbPath = path.join(volumeDir, "app.sqlite");
+
+// если dbPath существует и это папка → ошибка → фикс
+if (fs.existsSync(dbPath) && fs.lstatSync(dbPath).isDirectory()) {
+    console.log("❗ dbPath ведёт на папку. Создаю app.sqlite внутри неё.");
+    fs.writeFileSync(path.join(dbPath, "app.sqlite"), "");
+}
 
 // Папка для платёжек
 const rootDir = path.dirname(dbPath);
@@ -29,12 +44,15 @@ async function initDB() {
     });
 
     let buffer = null;
-    if (fs.existsSync(dbPath)) {
-        buffer = fs.readFileSync(dbPath);
-        db = new SQL.Database(buffer);
-    } else {
-        db = new SQL.Database();
-    }
+    if (!fs.existsSync(dbPath)) {
+    console.log("Создаю новую пустую базу...");
+    db = new SQL.Database();
+    saveDB();
+} else {
+    console.log("Открываю существующую базу:", dbPath);
+    const buffer = fs.readFileSync(dbPath);
+    db = new SQL.Database(buffer);
+}
 
     // таблица
     db.run(`
