@@ -97,33 +97,50 @@ function onSupplierSelect(){
 
 // создание
 async function createInvoice() {
-    const amount = amount.value.trim();
-    let supplier = supplierInput.style.display==="block"
-        ? supplierInput.value.trim()
-        : supplierSelect.value;
+    const amountValue = document.getElementById("amount").value.trim();
+    const arrivalValue = document.getElementById("arrivalDate").value.trim();
 
-    if(!supplier){ alert("Введите поставщика"); return; }
-    if(!amount){ alert("Введите сумму"); return; }
+    let supplier = "";
 
-    if(supplierInput.style.display==="block") saveSupplier(supplier);
+    // Новый поставщик
+    if (supplierInput.style.display === "block") {
+        supplier = supplierInput.value.trim();
+        if (!supplier) {
+            alert("Введите поставщика");
+            return;
+        }
+        saveSupplier(supplier);
+    } else {
+        supplier = supplierSelect.value.trim();
+        if (!supplier) {
+            alert("Выберите поставщика");
+            return;
+        }
+    }
 
-    await fetch("/api/invoice/create",{
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({
+    if (!amountValue) {
+        alert("Введите сумму");
+        return;
+    }
+
+    await fetch("/api/invoice/create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
             supplier,
-            amount,
-            organization_type: orgType.value,
-            arrival_date: arrivalDate.value,
-            need_new_request: needRequest.checked
+            amount: amountValue,
+            organization_type: document.getElementById("orgType").value,
+            arrival_date: arrivalValue,
+            need_new_request: document.getElementById("needRequest").checked
         })
     });
 
-    amount.value="";
-    needRequest.checked=false;
-    supplierInput.style.display="none";
-    supplierSelect.style.display="block";
-    newSupplierBtn.style.display="inline-block";
+    // очистка
+    document.getElementById("amount").value = "";
+    document.getElementById("needRequest").checked = false;
+    supplierInput.style.display = "none";
+    supplierSelect.style.display = "block";
+    newSupplierBtn.style.display = "inline-block";
 
     loadInvoices();
 }
@@ -191,7 +208,7 @@ async function loadHistory(){
 }
 
 // загрузка
-document.getElementById("arrivalDate").value = new Date().toISOString().substring(0,10);
+document.getElementById("arrivalDate").value = new Date().toISOString().slice(0,10);
 
 loadSuppliers();
 loadInvoices();
