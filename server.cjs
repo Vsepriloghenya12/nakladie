@@ -3,9 +3,9 @@
 const express = require("express");
 const path = require("path");
 const cors = require("cors");
-const sqlite3 = require("sqlite3").verbose();
 const fs = require("fs");
 const multer = require("multer");
+const Database = require("better-sqlite3");
 
 const app = express();
 
@@ -13,270 +13,191 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const dbPath = process.env.SQLITE_PATH || path.join(__dirname, "app.sqlite");
 
-// Папка для платежек (рядом с базой, обычно /mnt/data/payments)
+// Папка для платежек
 const uploadsRoot = path.dirname(dbPath);
 const paymentsDir = path.join(uploadsRoot, "payments");
 if (!fs.existsSync(paymentsDir)) {
-  fs.mkdirSync(paymentsDir, { recursive: true });
+    fs.mkdirSync(paymentsDir, { recursive: true });
 }
 
-// Статика для скачивания файлов
+// Раздаём файлы платежек
 app.use("/payments", express.static(paymentsDir));
 
 // ===== База данных =====
-const db = new sqlite3.Database(dbPath);
+const db = new Database(dbPath);
 
-db.serialize(() => {
-  // основная таблица
-  db.run(`
-    CREATE TABLE IF NOT EXISTS invoices (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      supplier TEXT,
-      organization_type TEXT,
-      amount REAL,
-      created_at TEXT,
-      need_new_request INTEGER DEFAULT 0,
-      paid INTEGER DEFAULT 0
-    )
-  `);
+// Создание таблицы, если нет
+db.prepare(`
+CREATE TABLE IF NOT EXISTS invoices (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    supplier TEXT,
+    organization_type TEXT,
+    amount REAL,
+    created_at TEXT,
+    need_new_request INTEGER DEFAULT 0,
+    paid INTEGER DEFAULT 0,
+    payment_file TEXT,
+    paid_at TEXT
+)
+`).run();
 
-  // добиваем недостающие поля (если таблица уже была)
-  db.run(`ALTER TABLE invoices ADD COLUMN payment_file TEXT`, err => {
-    if (err && !String(err.message).includes("duplicate column")) {
-      console.error("ALTER TABLE payment_file error:", err.message);
-    }
-  });
-
-  db.run(`ALTER TABLE invoices ADD COLUMN paid_at TEXT`, err => {
-    if (err && !String(err.message).includes("duplicate column")) {
-      console.error("ALTER TABLE paid_at error:", err.message);
-    }
-  });
-});
-
-// ===== Мидлвары =====
+// ===== Миддлвары =====
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
 // ===== Multer для загрузки PDF =====
 const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, paymentsDir);
-  },
-  filename: function (req, file, cb) {
-    const id = req.params.id || "inv";
-    const ts = Date.now();
-    cb(null, `invoice_${id}_${ts}.pdf`);
-  }
+    destination: function (req, file, cb) {
+        cb(null, paymentsDir);
+    },
+    filename: function (req, file, cb) {
+        const id = req.params.id;
+        const name = `invoice_${id}_${Date.now()}.pdf`;
+        cb(null, name);
+    }
 });
-
 const upload = multer({
-  storage,
-  fileFilter: (req, file, cb) => {
-    if (file.mimetype === "application/pdf") {
-      cb(null, true);
-    } else {
-      cb(new Error("Можно загружать только PDF-файлы"));
+    storage,
+    fileFilter: (req, file, cb) => {
+        if (file.mimetype === "application/pdf") cb(null, true);
+        else cb(new Error("Разрешены только PDF-файлы"));
     }
-  }
 });
 
-// ===== Вспомогательное: чистим платежки старше 10 дней =====
-function cleanupOldPayments() {
-  const tenDaysMs = 10 * 24 * 60 * 60 * 1000;
-  const now = Date.now();
+// ============================================================
+//                    ОЧИСТКА ПЛАТЁЖЕК > 10 дней
+// ============================================================
+function cleanupPayments() {
+    const rows = db.prepare(`
+        SELECT id, payment_file, paid_at FROM invoices 
+        WHERE payment_file IS NOT NULL AND paid_at IS NOT NULL
+    `).all();
 
-  db.all(
-    `SELECT id, payment_file, paid_at FROM invoices
-     WHERE payment_file IS NOT NULL AND paid_at IS NOT NULL`,
-    [],
-    (err, rows) => {
-      if (err) {
-        console.error("cleanup select error:", err.message);
-        return;
-      }
+    const now = Date.now();
+    const maxAge = 10 * 24 * 60 * 60 * 1000;
 
-      rows.forEach(row => {
-        const paidAtTime = Date.parse(row.paid_at);
-        if (!paidAtTime) return;
+    rows.forEach(row => {
+        const paidTime = Date.parse(row.paid_at);
+        if (!paidTime) return;
 
-        if (now - paidAtTime > tenDaysMs) {
-          // удаляем файл
-          const filePath = path.join(uploadsRoot, row.payment_file.replace(/^\/?payments\//, "payments/"));
-          fs.unlink(filePath, unlinkErr => {
-            if (unlinkErr && unlinkErr.code !== "ENOENT") {
-              console.error("unlink payment error:", unlinkErr.message);
-            }
-          });
+        if (now - paidTime > maxAge) {
+            // удалить файл
+            const full = path.join(uploadsRoot, row.payment_file);
+            if (fs.existsSync(full)) fs.unlinkSync(full);
 
-          // чистим ссылку в базе (оплата остаётся)
-          db.run(
-            `UPDATE invoices SET payment_file = NULL WHERE id = ?`,
-            [row.id],
-            updateErr => {
-              if (updateErr) {
-                console.error("cleanup update error:", updateErr.message);
-              }
-            }
-          );
+            // удалить ссылку в базе (оплата остаётся)
+            db.prepare(`
+                UPDATE invoices SET payment_file=NULL WHERE id=?
+            `).run(row.id);
         }
-      });
-    }
-  );
+    });
 }
 
-// Вызовем при старте
-cleanupOldPayments();
+cleanupPayments();
 
-// ===== Маршруты API =====
+// ============================================================
+//                      API МАРШРУТЫ
+// ============================================================
 
 // Создать накладную
 app.post("/api/invoice/create", (req, res) => {
-  const { supplier, organization_type, amount, need_new_request } = req.body || {};
+    const { supplier, organization_type, amount, need_new_request } = req.body;
 
-  if (!supplier || !organization_type || !amount) {
-    return res.status(400).json({ error: "Не хватает данных (supplier, organization_type, amount)" });
-  }
-
-  const created_at = new Date().toISOString();
-  const needFlag = need_new_request ? 1 : 0;
-
-  db.run(
-    `
-      INSERT INTO invoices (supplier, organization_type, amount, created_at, need_new_request, paid, payment_file, paid_at)
-      VALUES (?, ?, ?, ?, ?, 0, NULL, NULL)
-    `,
-    [supplier, organization_type, amount, created_at, needFlag],
-    function (err) {
-      if (err) {
-        console.error("DB insert error:", err);
-        return res.status(500).json({ error: "DB error" });
-      }
-      res.json({ id: this.lastID, message: "Invoice created" });
+    if (!supplier || !organization_type || !amount) {
+        return res.status(400).json({ error: "Не хватает данных" });
     }
-  );
+
+    const created_at = new Date().toISOString();
+    const stmt = db.prepare(`
+        INSERT INTO invoices (supplier, organization_type, amount, created_at, need_new_request)
+        VALUES (?, ?, ?, ?, ?)
+    `);
+
+    const info = stmt.run(
+        supplier,
+        organization_type,
+        amount,
+        created_at,
+        need_new_request ? 1 : 0
+    );
+
+    res.json({ id: info.lastInsertRowid });
 });
 
-// Список всех НЕОПЛАЧЕННЫХ накладных (для руководителя и менеджера-актив)
+// Получить НЕОПЛАЧЕННЫЕ накладные
 app.get("/api/invoice/list", (req, res) => {
-  db.all(
-    `SELECT * FROM invoices WHERE paid = 0 ORDER BY id DESC`,
-    [],
-    (err, rows) => {
-      if (err) {
-        console.error("DB select error:", err);
-        return res.status(500).json({ error: "DB error" });
-      }
-      res.json(rows);
-    }
-  );
+    const rows = db.prepare(`
+        SELECT * FROM invoices WHERE paid=0 ORDER BY id DESC
+    `).all();
+
+    res.json(rows);
 });
 
-// История оплат за 10 дней (для менеджера)
-app.get("/api/invoice/history", (req, res) => {
-  cleanupOldPayments(); // заодно подчистим
-
-  // оплаченные, у которых есть дата оплаты и она не старше 10 дней
-  db.all(
-    `
-    SELECT * FROM invoices
-    WHERE paid = 1
-      AND paid_at IS NOT NULL
-      AND datetime(paid_at) >= datetime('now', '-10 days')
-    ORDER BY datetime(paid_at) DESC
-    `,
-    [],
-    (err, rows) => {
-      if (err) {
-        console.error("DB history error:", err);
-        return res.status(500).json({ error: "DB error" });
-      }
-      res.json(rows);
-    }
-  );
-});
-
-// Обновить флаг "нужно делать новую заявку"
+// Обновить галочку
 app.post("/api/invoice/update/:id", (req, res) => {
-  const id = req.params.id;
-  const { need_new_request } = req.body || {};
-  const needFlag = need_new_request ? 1 : 0;
+    db.prepare(`
+        UPDATE invoices SET need_new_request=? WHERE id=?
+    `).run(req.body.need_new_request ? 1 : 0, req.params.id);
 
-  db.run(
-    `UPDATE invoices SET need_new_request = ? WHERE id = ?`,
-    [needFlag, id],
-    function (err) {
-      if (err) {
-        console.error("DB update error:", err);
-        return res.status(500).json({ error: "DB error" });
-      }
-      if (this.changes === 0) {
-        return res.status(404).json({ error: "Invoice not found" });
-      }
-      res.json({ message: "Updated" });
-    }
-  );
+    res.json({ message: "updated" });
 });
 
-// Загрузка платёжки + отметка оплаты
+// История оплат (10 дней)
+app.get("/api/invoice/history", (req, res) => {
+    cleanupPayments();
+
+    const rows = db.prepare(`
+        SELECT * FROM invoices
+        WHERE paid=1 
+        AND paid_at IS NOT NULL
+        AND datetime(paid_at) >= datetime('now', '-10 days')
+        ORDER BY datetime(paid_at) DESC
+    `).all();
+
+    res.json(rows);
+});
+
+// Загрузка PDF + пометка оплачено
 app.post("/api/invoice/upload-payment/:id", upload.single("payment"), (req, res) => {
-  const id = req.params.id;
+    if (!req.file) return res.status(400).json({ error: "Файл не загружен" });
 
-  if (!req.file) {
-    return res.status(400).json({ error: "Файл не загружен" });
-  }
+    const id = req.params.id;
+    const paid_at = new Date().toISOString();
+    const filePath = `/payments/${req.file.filename}`;
 
-  const paid_at = new Date().toISOString();
-  const relativePath = `/payments/${req.file.filename}`;
+    db.prepare(`
+        UPDATE invoices 
+        SET paid=1, paid_at=?, payment_file=?
+        WHERE id=?
+    `).run(paid_at, filePath, id);
 
-  db.run(
-    `UPDATE invoices
-     SET paid = 1,
-         paid_at = ?,
-         payment_file = ?
-     WHERE id = ?`,
-    [paid_at, relativePath, id],
-    function (err) {
-      if (err) {
-        console.error("DB upload-payment error:", err);
-        return res.status(500).json({ error: "DB error" });
-      }
-      if (this.changes === 0) {
-        return res.status(404).json({ error: "Invoice not found" });
-      }
-      res.json({ message: "Payment uploaded", paid_at, payment_file: relativePath });
-    }
-  );
+    res.json({
+        message: "uploaded",
+        payment_file: filePath,
+        paid_at
+    });
 });
 
-// Старый маршрут mark-paid оставим (без файла, если вдруг нужен)
+// Ручная пометка оплачено (без файла) — оставил на всякий случай
 app.post("/api/invoice/mark-paid/:id", (req, res) => {
-  const id = req.params.id;
-  const paid_at = new Date().toISOString();
+    const paid_at = new Date().toISOString();
 
-  db.run(
-    `UPDATE invoices SET paid = 1, paid_at = ? WHERE id = ?`,
-    [paid_at, id],
-    function (err) {
-      if (err) {
-        console.error("DB mark-paid error:", err);
-        return res.status(500).json({ error: "DB error" });
-      }
-      if (this.changes === 0) {
-        return res.status(404).json({ error: "Invoice not found" });
-      }
-      res.json({ message: "Invoice marked as paid (без файла)", paid_at });
-    }
-  );
+    db.prepare(`
+        UPDATE invoices SET paid=1, paid_at=? WHERE id=?
+    `).run(paid_at, req.params.id);
+
+    res.json({ message: "paid", paid_at });
 });
 
-// ===== Маршрут главной страницы =====
+// Главная → login.html
 app.get("/", (req, res) => {
-  res.sendFile(path.join(__dirname, "public", "login.html"));
+    res.sendFile(path.join(__dirname, "public", "login.html"));
 });
 
-// ===== Старт сервера =====
+// ============================================================
+//                         СТАРТ СЕРВЕРА
+// ============================================================
 app.listen(PORT, () => {
-  console.log(`Server started on port ${PORT}`);
+    console.log("Server started on port", PORT);
 });
